@@ -1,0 +1,215 @@
+{
+    "AWSTemplateFormatVersion": "2010-09-09",
+    "Parameters": {
+        "KeyName": {
+            "Description": "Key Pair name",
+            "Type": "AWS::EC2::KeyPair::KeyName",
+            "Default": "mykey"
+        },
+        "JenkinsAdminPassword": {
+            "Description": "Password for Jenkins admin user",
+            "Type": "String",
+            "AllowedPattern" : "[a-zA-Z0-9]*",
+            "MinLength" : "8",
+            "MaxLength" : "42"
+        }
+    },
+    "Mappings": {
+        "EC2RegionMap": {
+            "ap-northeast-1": {
+                "AmazonLinuxAMIHVMEBSBacked64bit": "ami-cbf90ecb"
+            },
+            "ap-southeast-1": {
+                "AmazonLinuxAMIHVMEBSBacked64bit": "ami-68d8e93a"
+            },
+            "ap-southeast-2": {
+                "AmazonLinuxAMIHVMEBSBacked64bit": "ami-fd9cecc7"
+            },
+            "eu-central-1": {
+                "AmazonLinuxAMIHVMEBSBacked64bit": "ami-a8221fb5"
+            },
+            "eu-west-1": {
+                "AmazonLinuxAMIHVMEBSBacked64bit": "ami-a10897d6"
+            },
+            "sa-east-1": {
+                "AmazonLinuxAMIHVMEBSBacked64bit": "ami-b52890a8"
+            },
+            "us-east-1": {
+                "AmazonLinuxAMIHVMEBSBacked64bit": "ami-1ecae776"
+            },
+            "us-west-1": {
+                "AmazonLinuxAMIHVMEBSBacked64bit": "ami-d114f295"
+            },
+            "us-west-2": {
+                "AmazonLinuxAMIHVMEBSBacked64bit": "ami-e7527ed7"
+            }
+        }
+    },
+    "Resources": {
+        "StoreVPC": {
+            "Type": "AWS::EC2::VPC",
+            "Properties": {
+                "CidrBlock": "192.168.1.0/24",
+                "EnableDnsHostnames": true,
+                "EnableDnsSupport": true
+            }
+        },
+        "StoreSubnetA": {
+            "Type": "AWS::EC2::Subnet",
+            "Properties": {
+                "AvailabilityZone": {
+                    "Fn::Select": [
+                        "0",
+                        {
+                            "Fn::GetAZs": ""
+                        }
+                    ]
+                },
+                "CidrBlock": "192.168.1.0/26",
+                "VpcId": {
+                    "Ref": "StoreVPC"
+                }
+            }
+        },
+        "CustomRouteTable": {
+            "Type": "AWS::EC2::RouteTable",
+            "Properties": {
+                "VpcId": {
+                    "Ref": "StoreVPC"
+                }
+            }
+        },
+        "RouteTableAssociationA": {
+            "Type": "AWS::EC2::SubnetRouteTableAssociation",
+            "Properties": {
+                "RouteTableId": {
+                    "Ref": "CustomRouteTable"
+                },
+                "SubnetId": {
+                    "Ref": "StoreSubnetA"
+                }
+            }
+        },
+        "InternetGateway": {
+            "Type": "AWS::EC2::InternetGateway",
+            "Properties": {}
+        },
+        "VPCGatewayAttachment": {
+            "Type": "AWS::EC2::VPCGatewayAttachment",
+            "Properties": {
+                "VpcId": {
+                    "Ref": "StoreVPC"
+                },
+                "InternetGatewayId": {
+                    "Ref": "InternetGateway"
+                }
+            }
+        },
+        "RouteToInternet": {
+            "Type": "AWS::EC2::Route",
+            "Properties": {
+                "RouteTableId": {
+                    "Ref": "CustomRouteTable"
+                },
+                "DestinationCidrBlock": "0.0.0.0/0",
+                "GatewayId": {
+                    "Ref": "InternetGateway"
+                }
+            },
+            "DependsOn": [
+                "VPCGatewayAttachment"
+            ]
+        },
+        "SecurityGroup": {
+            "Type": "AWS::EC2::SecurityGroup",
+            "Properties": {
+                "GroupDescription": "store security group",
+                "VpcId": {
+                    "Ref": "StoreVPC"
+                },
+                "SecurityGroupIngress": [
+                    {
+                        "CidrIp": "0.0.0.0/0",
+                        "FromPort": 22,
+                        "IpProtocol": "tcp",
+                        "ToPort": 22
+                    },
+                    {
+                        "IpProtocol": "tcp",
+                        "FromPort": "8080",
+                        "ToPort": "8080",
+                        "CidrIp": "0.0.0.0/0"
+                    }
+                ]
+            }
+        },
+        "InstanceA1": {
+            "Type": "AWS::EC2::Instance",
+            "Properties": {
+                "ImageId": {
+                    "Fn::FindInMap": [
+                        "EC2RegionMap",
+                        {
+                            "Ref": "AWS::Region"
+                        },
+                        "AmazonLinuxAMIHVMEBSBacked64bit"
+                    ]
+                },
+                "InstanceType": "t2.micro",
+                "KeyName": {"Ref": "KeyName"},
+                "NetworkInterfaces": [ {
+                    "AssociatePublicIpAddress": "true",
+                    "DeviceIndex": "0",
+                    "GroupSet": [{ "Ref" : "SecurityGroup" }],
+                    "SubnetId": { "Ref" : "StoreSubnetA" }
+                 } ],
+                "UserData": {"Fn::Base64": {"Fn::Join": ["", [
+                    "#!/bin/bash -ex\n",
+                    "yum install java-1.8.0 -y\n",
+                    "yum remove java-1.7.0-openjdk -y\n",
+                    "wget http://pkg.jenkins-ci.org/redhat/jenkins-2.138-1.1.noarch.rpm\n",
+                    "rpm --install jenkins-2.138-1.1.noarch.rpm\n",
+                    "sed -i -e 's/JENKINS_ARGS=\\\"\\\"/JENKINS_ARGS=\\\"--argumentsRealm.passwd.admin=", {"Ref": "JenkinsAdminPassword"}, " --argumentsRealm.roles.admin=admin\\\"/g' /etc/sysconfig/jenkins\n",
+                    "echo \"<?xml version='1.0' encoding='UTF-8'?><hudson><version>1.0</version><useSecurity>true</useSecurity><authorizationStrategy class=\\\"hudson.security.FullControlOnceLoggedInAuthorizationStrategy\\\"/><securityRealm class=\\\"hudson.security.LegacySecurityRealm\\\"/></hudson>\" > /var/lib/jenkins/config.xml\n",
+                    "service jenkins start\n"
+                ]]}}
+            },
+            "DependsOn": "VPCGatewayAttachment"
+
+        },
+        "RecoveryAlarm": {
+            "Type": "AWS::CloudWatch::Alarm",
+            "Properties": {
+                "AlarmDescription": "Recover server when underlying hardware fails.",
+                "Namespace": "AWS/EC2" ,
+                "MetricName": "StatusCheckFailed_System",
+                "Statistic": "Minimum",
+                "Period": "60",
+                "EvaluationPeriods": "5",
+                "ComparisonOperator": "GreaterThanThreshold",
+                "Threshold": "0",
+                "AlarmActions": [{"Fn::Join": ["", ["arn:aws:automate:", { "Ref": "AWS::Region"}, ":ec2:recover"]]}],
+                "Dimensions": [{"Name": "InstanceId", "Value": {"Ref": "InstanceA1"}}]
+            }
+        }
+    },
+    "Outputs": {
+        "PublicName": {
+            "Description": "Jenkins URL",
+            "Value": {"Fn::Join": ["", ["http://", {
+                "Fn::GetAtt": [
+                    "InstanceA1",
+                    "PublicDnsName"
+                ]
+            }, ":8080"]]}
+        },
+        "User": {
+            "Description": "Administrator user for Jenkins.",
+            "Value": "admin"
+        },
+        "Password": {
+            "Description": "Password for Jenkins administrator user.",
+            "Value": {"Ref": "JenkinsAdminPassword"}
+        }
+    }
+}

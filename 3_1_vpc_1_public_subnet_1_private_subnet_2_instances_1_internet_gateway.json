@@ -1,0 +1,231 @@
+{
+    "AWSTemplateFormatVersion": "2010-09-09",
+    "Parameters": {
+	    "KeyName": {
+	       "Description": "Key Pair name",
+           "Type": "AWS::EC2::KeyPair::KeyName",
+           "Default": "mykey"
+	    }
+    },
+    "Mappings": {
+        "EC2RegionMap": {
+            "ap-northeast-1": {
+                "AmazonLinuxAMIHVMEBSBacked64bit": "ami-cbf90ecb"
+            },
+            "ap-southeast-1": {
+                "AmazonLinuxAMIHVMEBSBacked64bit": "ami-68d8e93a"
+            },
+            "ap-southeast-2": {
+                "AmazonLinuxAMIHVMEBSBacked64bit": "ami-fd9cecc7"
+            },
+            "eu-central-1": {
+                "AmazonLinuxAMIHVMEBSBacked64bit": "ami-a8221fb5"
+            },
+            "eu-west-1": {
+                "AmazonLinuxAMIHVMEBSBacked64bit": "ami-a10897d6"
+            },
+            "sa-east-1": {
+                "AmazonLinuxAMIHVMEBSBacked64bit": "ami-b52890a8"
+            },
+            "us-east-1": {
+                "AmazonLinuxAMIHVMEBSBacked64bit": "ami-1ecae776"
+            },
+            "us-west-1": {
+                "AmazonLinuxAMIHVMEBSBacked64bit": "ami-d114f295"
+            },
+            "us-west-2": {
+                "AmazonLinuxAMIHVMEBSBacked64bit": "ami-e7527ed7"
+            }
+        }
+    },
+    "Resources": {
+        "StoreVPC": {
+            "Type": "AWS::EC2::VPC",
+            "Properties": {
+                "CidrBlock": "192.168.1.0/24",
+                "EnableDnsHostnames": true,
+                "EnableDnsSupport": true
+            }
+        },
+        "StoreSubnetA": {
+            "Type": "AWS::EC2::Subnet",
+            "Properties": {
+                "AvailabilityZone": {
+                    "Fn::Select": [
+                        "0",
+                        {
+                            "Fn::GetAZs": ""
+                        }
+                    ]
+                },
+                "CidrBlock": "192.168.1.0/26",
+                "VpcId": {
+                    "Ref": "StoreVPC"
+                }
+            }
+        },
+        "StoreSubnetB": {
+            "Type": "AWS::EC2::Subnet",
+            "Properties": {
+                "AvailabilityZone": {
+                    "Fn::Select": [
+                        "0",
+                        {
+                            "Fn::GetAZs": ""
+                        }
+                    ]
+                },
+                "CidrBlock": "192.168.1.64/26",
+                "VpcId": {
+                    "Ref": "StoreVPC"
+                }
+            }
+        },
+        "MainRouteTable": {
+            "Type": "AWS::EC2::RouteTable",
+            "Properties": {
+                "VpcId": {
+                    "Ref": "StoreVPC"
+                }
+            }
+        },
+        "CustomRouteTable": {
+            "Type": "AWS::EC2::RouteTable",
+            "Properties": {
+                "VpcId": {
+                    "Ref": "StoreVPC"
+                }
+            }
+        },
+        "RouteTableAssociationA": {
+            "Type": "AWS::EC2::SubnetRouteTableAssociation",
+            "Properties": {
+                "RouteTableId": {
+                    "Ref": "CustomRouteTable"
+                },
+                "SubnetId": {
+                    "Ref": "StoreSubnetA"
+                }
+            }
+        },
+        "RouteTableAssociationB": {
+            "Type": "AWS::EC2::SubnetRouteTableAssociation",
+            "Properties": {
+                "RouteTableId": {
+                    "Ref": "MainRouteTable"
+                },
+                "SubnetId": {
+                    "Ref": "StoreSubnetB"
+                }
+            }
+        },
+        "InternetGateway": {
+            "Type": "AWS::EC2::InternetGateway",
+            "Properties": {}
+        },
+        "VPCGatewayAttachment": {
+            "Type": "AWS::EC2::VPCGatewayAttachment",
+            "Properties": {
+                "VpcId": {
+                    "Ref": "StoreVPC"
+                },
+                "InternetGatewayId": {
+                    "Ref": "InternetGateway"
+                }
+            }
+        },
+        "RouteToInternet": {
+            "Type": "AWS::EC2::Route",
+            "Properties": {
+                "RouteTableId": {
+                    "Ref": "CustomRouteTable"
+                },
+                "DestinationCidrBlock": "0.0.0.0/0",
+                "GatewayId": {
+                    "Ref": "InternetGateway"
+                }
+            },
+            "DependsOn": [
+                "VPCGatewayAttachment"
+            ]
+        },
+        "SecurityGroup": {
+            "Type": "AWS::EC2::SecurityGroup",
+            "Properties": {
+                "GroupDescription": "store security group",
+                "VpcId": {
+                    "Ref": "StoreVPC"
+                },
+                "SecurityGroupIngress": [
+                    {
+                        "CidrIp": "0.0.0.0/0",
+                        "FromPort": 22,
+                        "IpProtocol": "tcp",
+                        "ToPort": 22
+                    },
+                    {
+                        "CidrIp": "0.0.0.0/0",
+                        "FromPort": 8,
+                        "IpProtocol": "icmp",
+                        "ToPort": -1
+                    }
+                ]
+            }
+        },
+        "InstanceA1": {
+            "Type": "AWS::EC2::Instance",
+            "Properties": {
+                "ImageId": {
+                    "Fn::FindInMap": [
+                        "EC2RegionMap",
+                        {
+                            "Ref": "AWS::Region"
+                        },
+                        "AmazonLinuxAMIHVMEBSBacked64bit"
+                    ]
+                },
+                "InstanceType": "t2.micro",
+				"KeyName": {"Ref": "KeyName"},
+                "NetworkInterfaces": [ {
+                "AssociatePublicIpAddress": "true",
+                "DeviceIndex": "0",
+                "GroupSet": [{ "Ref" : "SecurityGroup" }],
+                "SubnetId": { "Ref" : "StoreSubnetA" }
+                 } ]
+            }
+        },
+        "InstanceB1": {
+            "Type": "AWS::EC2::Instance",
+            "Properties": {
+                "ImageId": {
+                    "Fn::FindInMap": [
+                        "EC2RegionMap",
+                        {
+                            "Ref": "AWS::Region"
+                        },
+                        "AmazonLinuxAMIHVMEBSBacked64bit"
+                    ]
+                },
+                "InstanceType": "t2.micro",
+                "KeyName": "mykey",
+                "SecurityGroupIds": [ 
+                    { "Fn::GetAtt": ["SecurityGroup", "GroupId"] }
+                ],
+                "SubnetId": {
+                    "Ref": "StoreSubnetB"
+                }
+            }
+        }
+    },
+    "Outputs": {
+        "PublicName": {
+            "Value": {
+                "Fn::GetAtt": [
+                    "InstanceA1",
+                    "PublicDnsName"
+                ]
+            },
+            "Description": "Public name (connect via SSH as user ec2-user)"
+        }
+    }
+}

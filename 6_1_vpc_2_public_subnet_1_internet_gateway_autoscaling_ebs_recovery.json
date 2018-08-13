@@ -1,0 +1,222 @@
+{
+    "AWSTemplateFormatVersion": "2010-09-09",
+    "Parameters": {
+	    "KeyName": {
+	       "Description": "Key Pair name",
+           "Type": "AWS::EC2::KeyPair::KeyName",
+           "Default": "mykey"
+	    },
+        "JenkinsAdminPassword": {
+            "Description": "Password for Jenkins admin user",
+            "Type": "String",
+            "AllowedPattern" : "[a-zA-Z0-9]*",
+            "MinLength" : "8",
+            "MaxLength" : "42"
+        },
+        "AMISnapshot": {
+            "Description": "ImageId",
+            "Type": "String"
+        }
+    },
+    "Conditions": {
+        "HasKeyName": {"Fn::Not": [{"Fn::Equals": ["", {"Ref": "AMISnapshot"}]}]}
+    },
+    "Mappings": {
+        "EC2RegionMap": {
+            "ap-northeast-1": {
+                "AmazonLinuxAMIHVMEBSBacked64bit": "ami-cbf90ecb"
+            },
+            "ap-southeast-1": {
+                "AmazonLinuxAMIHVMEBSBacked64bit": "ami-68d8e93a"
+            },
+            "ap-southeast-2": {
+                "AmazonLinuxAMIHVMEBSBacked64bit": "ami-fd9cecc7"
+            },
+            "eu-central-1": {
+                "AmazonLinuxAMIHVMEBSBacked64bit": "ami-a8221fb5"
+            },
+            "eu-west-1": {
+                "AmazonLinuxAMIHVMEBSBacked64bit": "ami-a10897d6"
+            },
+            "sa-east-1": {
+                "AmazonLinuxAMIHVMEBSBacked64bit": "ami-b52890a8"
+            },
+            "us-east-1": {
+                "AmazonLinuxAMIHVMEBSBacked64bit": "ami-1ecae776"
+            },
+            "us-west-1": {
+                "AmazonLinuxAMIHVMEBSBacked64bit": "ami-d114f295"
+            },
+            "us-west-2": {
+                "AmazonLinuxAMIHVMEBSBacked64bit": "ami-e7527ed7"
+            }
+        }
+    },
+    "Resources": {
+        "StoreVPC": {
+            "Type": "AWS::EC2::VPC",
+            "Properties": {
+                "CidrBlock": "192.168.1.0/24",
+                "EnableDnsHostnames": true,
+                "EnableDnsSupport": true
+            }
+        },
+        "SubnetA": {
+            "Type": "AWS::EC2::Subnet",
+            "Properties": {
+                "AvailabilityZone": {
+                    "Fn::Select": [
+                        "0",
+                        {
+                            "Fn::GetAZs": ""
+                        }
+                    ]
+                },
+                "CidrBlock": "192.168.1.0/26",
+                "VpcId": {
+                    "Ref": "StoreVPC"
+                }
+            }
+        },
+        "SubnetB": {
+            "Type": "AWS::EC2::Subnet",
+            "Properties": {
+                "AvailabilityZone": {
+                    "Fn::Select": [
+                        "1",
+                        {
+                            "Fn::GetAZs": ""
+                        }
+                    ]
+                },
+                "CidrBlock": "192.168.1.64/26",
+                "VpcId": {
+                    "Ref": "StoreVPC"
+                }
+            }
+        },
+        "CustomRouteTable": {
+            "Type": "AWS::EC2::RouteTable",
+            "Properties": {
+                "VpcId": {
+                    "Ref": "StoreVPC"
+                }
+            }
+        },
+        "RouteTableAssociationA": {
+            "Type": "AWS::EC2::SubnetRouteTableAssociation",
+            "Properties": {
+                "RouteTableId": {
+                    "Ref": "CustomRouteTable"
+                },
+                "SubnetId": {
+                    "Ref": "SubnetA"
+                }
+            }
+        },
+        "RouteTableAssociationB": {
+            "Type": "AWS::EC2::SubnetRouteTableAssociation",
+            "Properties": {
+                "RouteTableId": {
+                    "Ref": "CustomRouteTable"
+                },
+                "SubnetId": {
+                    "Ref": "SubnetB"
+                }
+            }
+        },
+        "InternetGateway": {
+            "Type": "AWS::EC2::InternetGateway",
+            "Properties": {}
+        },
+        "VPCGatewayAttachment": {
+            "Type": "AWS::EC2::VPCGatewayAttachment",
+            "Properties": {
+                "VpcId": {
+                    "Ref": "StoreVPC"
+                },
+                "InternetGatewayId": {
+                    "Ref": "InternetGateway"
+                }
+            }
+        },
+        "RouteToInternet": {
+            "Type": "AWS::EC2::Route",
+            "Properties": {
+                "RouteTableId": {
+                    "Ref": "CustomRouteTable"
+                },
+                "DestinationCidrBlock": "0.0.0.0/0",
+                "GatewayId": {
+                    "Ref": "InternetGateway"
+                }
+            },
+            "DependsOn": [
+                "VPCGatewayAttachment"
+            ]
+        },
+        "SecurityGroup": {
+            "Type": "AWS::EC2::SecurityGroup",
+            "Properties": {
+                "GroupDescription": "store security group",
+                "VpcId": {
+                    "Ref": "StoreVPC"
+                },
+                "SecurityGroupIngress": [
+                    {
+                        "CidrIp": "0.0.0.0/0",
+                        "FromPort": 22,
+                        "IpProtocol": "tcp",
+                        "ToPort": 22
+                    },
+                    {
+                        "IpProtocol": "tcp",
+                        "FromPort": "8080",
+                        "ToPort": "8080",
+                        "CidrIp": "0.0.0.0/0"
+                    },
+                    {
+                        "CidrIp": "0.0.0.0/0",
+                        "FromPort": 8,
+                        "IpProtocol": "icmp",
+                        "ToPort": -1
+                    }
+                ]
+            }
+        },
+        "LaunchConfiguration": {
+            "Type": "AWS::AutoScaling::LaunchConfiguration",
+            "Properties": {
+                "InstanceMonitoring": false,
+                "ImageId": {"Fn::If": ["HasKeyName", {"Ref": "AMISnapshot"}, {"Fn::FindInMap": ["EC2RegionMap", {"Ref": "AWS::Region"}, "AmazonLinuxAMIHVMEBSBacked64bit"]}]},
+                "KeyName": {"Ref": "KeyName"},
+                "SecurityGroups": [{"Ref": "SecurityGroup"}],
+                "AssociatePublicIpAddress": true,
+                "InstanceType": "t2.micro",
+                "UserData": {"Fn::Base64": {"Fn::Join": ["", [
+                    "#!/bin/bash -ex\n",
+                    "yum install java-1.8.0 -y\n",
+                    "yum remove java-1.7.0-openjdk -y\n",
+                    "wget http://pkg.jenkins-ci.org/redhat/jenkins-2.138-1.1.noarch.rpm\n",
+                    "rpm --install jenkins-2.138-1.1.noarch.rpm\n",
+                    "sed -i -e 's/JENKINS_ARGS=\\\"\\\"/JENKINS_ARGS=\\\"--argumentsRealm.passwd.admin=", {"Ref": "JenkinsAdminPassword"}, " --argumentsRealm.roles.admin=admin\\\"/g' /etc/sysconfig/jenkins\n",
+                    "echo \"<?xml version='1.0' encoding='UTF-8'?><hudson><version>1.0</version><useSecurity>true</useSecurity><authorizationStrategy class=\\\"hudson.security.FullControlOnceLoggedInAuthorizationStrategy\\\"/><securityRealm class=\\\"hudson.security.LegacySecurityRealm\\\"/></hudson>\" > /var/lib/jenkins/config.xml\n",
+                    "service jenkins start\n"
+                ]]}}
+            }
+        },
+        "AutoScalingGroup": {
+            "Type": "AWS::AutoScaling::AutoScalingGroup",
+            "Properties": {
+                "LaunchConfigurationName": {"Ref": "LaunchConfiguration"},
+                "DesiredCapacity": 1,
+                "MinSize": 1,
+                "MaxSize": 1,
+                "VPCZoneIdentifier": [{"Ref": "SubnetA"}, {"Ref": "SubnetB"}],
+                "HealthCheckGracePeriod": 600,
+                "HealthCheckType": "EC2"
+            },
+            "DependsOn": "VPCGatewayAttachment"
+        }
+    }
+}
